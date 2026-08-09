@@ -1,0 +1,59 @@
+name: Build and Release APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter Project Wrapper
+        run: flutter create --platforms android --project-name geoattend .
+
+      - name: Patch Android for Firebase
+        run: python3 patch_android_firebase.py
+
+      - name: Inject google-services.json
+        run: |
+          mkdir -p android/app
+          if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
+            echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+          else
+            echo "ERROR: GOOGLE_SERVICES_JSON secret is not set."
+            echo "Go to your repo -> Settings -> Secrets and variables -> Actions ->"
+            echo "New repository secret, name it GOOGLE_SERVICES_JSON, and paste the"
+            echo "full contents of your google-services.json file as the value."
+            exit 1
+          fi
+
+      - name: Verify google-services.json is valid JSON
+        run: python3 -c "import json; json.load(open('android/app/google-services.json'))"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeoAttend-Release-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
