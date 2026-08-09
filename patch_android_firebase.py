@@ -7,10 +7,16 @@ Modern `flutter create` generates Kotlin DSL Gradle files
 Groovy .gradle files. This script targets the Kotlin DSL format to match.
 """
 import os
+import re
 import sys
 
 build_gradle_path = 'android/build.gradle.kts'
 app_build_gradle_path = 'android/app/build.gradle.kts'
+
+# This MUST exactly match the package name registered in your Firebase
+# project's google-services.json, or the build will fail with
+# "No matching client found for package name ...".
+TARGET_PACKAGE = 'com.radt9098.geoattend'
 
 if not os.path.exists(build_gradle_path):
     print(f"ERROR: {build_gradle_path} not found. "
@@ -66,7 +72,48 @@ if 'com.google.gms.google-services' not in app_build_gradle:
         print("ERROR: No 'plugins {' block found in app/build.gradle.kts "
               "- cannot safely patch. Aborting.")
         sys.exit(1)
-    with open(app_build_gradle_path, 'w') as f:
-        f.write(app_build_gradle)
+
+# --- Fix the package name: Flutter defaults to com.example.<name>, but it
+# must exactly match what's registered in google-services.json ---
+app_build_gradle, ns_count = re.subn(
+    r'namespace\s*=\s*"[^"]+"',
+    f'namespace = "{TARGET_PACKAGE}"',
+    app_build_gradle,
+)
+app_build_gradle, id_count = re.subn(
+    r'applicationId\s*=\s*"[^"]+"',
+    f'applicationId = "{TARGET_PACKAGE}"',
+    app_build_gradle,
+)
+if ns_count == 0 or id_count == 0:
+    print(f"WARNING: Could not find namespace/applicationId lines to patch "
+          f"(found namespace: {ns_count}, applicationId: {id_count}). "
+          f"The build may fail with a package name mismatch.")
+else:
+    print(f"Patched package name to {TARGET_PACKAGE}.")
+
+with open(app_build_gradle_path, 'w') as f:
+    f.write(app_build_gradle)
+
+# --- Move MainActivity.kt to match the new package's folder structure ---
+default_kotlin_dir = 'android/app/src/main/kotlin/com/example/geoattend'
+target_kotlin_dir = 'android/app/src/main/kotlin/' + TARGET_PACKAGE.replace('.', '/')
+main_activity_src = os.path.join(default_kotlin_dir, 'MainActivity.kt')
+
+if os.path.exists(main_activity_src):
+    os.makedirs(target_kotlin_dir, exist_ok=True)
+    with open(main_activity_src, 'r') as f:
+        content = f.read()
+    content = content.replace('package com.example.geoattend',
+                               f'package {TARGET_PACKAGE}')
+    with open(os.path.join(target_kotlin_dir, 'MainActivity.kt'), 'w') as f:
+        f.write(content)
+    if os.path.abspath(target_kotlin_dir) != os.path.abspath(default_kotlin_dir):
+        os.remove(main_activity_src)
+    print(f"Moved MainActivity.kt to {target_kotlin_dir}.")
+else:
+    print(f"WARNING: {main_activity_src} not found - skipping "
+          f"MainActivity relocation. If the package name changed from a "
+          f"different default, this may need manual adjustment.")
 
 print("Successfully patched Android Gradle (Kotlin DSL) files for Firebase.")
